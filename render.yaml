@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: angelicoanziutti-whatsapp-bot
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_VERSION
+        value: 20.18.0
+      - key: AUTHENTICATION_API_KEY
+        generateValue: true
+      - key: AUTH_TABLE
+        value: baileys_auth_advocacia
