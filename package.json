@@ -21,11 +21,13 @@
   "author": "Angélico & Anziutti Advogados Associados",
   "license": "ISC",
   "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@whiskeysockets/baileys": "^6.7.13",
     "axios": "^1.8.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "fluent-ffmpeg": "^2.1.3",
     "mongodb": "^6.12.0",
     "pg": "^8.13.1",
     "pino": "^9.6.0",
