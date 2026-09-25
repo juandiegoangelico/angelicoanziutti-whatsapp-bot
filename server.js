@@ -521,6 +521,37 @@ app.get('/channel-id', async (req, res) => {
   }
 });
 
+// Rota 4.1: Verificar Permissões de Administrador do Canal Oficial
+app.get('/channel-status', async (req, res) => {
+  if (!isConnected || !sock) {
+    return res.status(503).json({ error: 'WhatsApp não está conectado. Escaneie o QR Code em /qr' });
+  }
+
+  const jid = req.query.jid || '120363413003896686@newsletter';
+  try {
+    const meta = await sock.newsletterMetadata('jid', jid);
+    const role = meta.viewer_metadata?.role || 'NONE';
+    const isAdmin = role === 'ADMIN' || role === 'OWNER';
+
+    return res.json({
+      success: true,
+      jid,
+      name: meta.name || meta.thread_metadata?.name?.text,
+      userPhone,
+      role,
+      isAdmin,
+      subscribers: meta.subscribers_count || meta.thread_metadata?.subscribers_count || 0,
+      description: meta.thread_metadata?.description?.text || '',
+    });
+  } catch (err) {
+    console.error('❌ Erro ao consultar status do Canal:', err.message);
+    return res.status(500).json({ 
+      error: 'Não foi possível verificar status do canal. Certifique-se de que o número do escritório é administrador ou seguidor.', 
+      details: err.message 
+    });
+  }
+});
+
 // Rota 5: Disparo de Mensagem e Imagem
 async function handleSend(req, res) {
   if (!isConnected || !sock) {
@@ -545,16 +576,24 @@ async function handleSend(req, res) {
     let result;
 
     if (imageUrl && (imageUrl.startsWith('http://') || imageUrl.startsWith('https://'))) {
-      const response = await axios.get(imageUrl, {
-        responseType: 'arraybuffer',
-        timeout: 15000,
-      });
-      const imageBuffer = Buffer.from(response.data);
+      try {
+        console.log(`📥 [WhatsApp Advocacia] Baixando imagem de capa: ${imageUrl}`);
+        const response = await axios.get(imageUrl, {
+          responseType: 'arraybuffer',
+          timeout: 20000,
+        });
+        const imageBuffer = Buffer.from(response.data);
 
-      result = await sock.sendMessage(formattedJid, {
-        image: imageBuffer,
-        caption: messageText,
-      });
+        result = await sock.sendMessage(formattedJid, {
+          image: imageBuffer,
+          caption: messageText,
+        });
+      } catch (imgErr) {
+        console.warn(`⚠️ [WhatsApp Advocacia] Falha ao baixar imagem (${imgErr.message}). Enviando apenas texto para não perder a publicação.`);
+        result = await sock.sendMessage(formattedJid, {
+          text: messageText,
+        });
+      }
     } else {
       result = await sock.sendMessage(formattedJid, {
         text: messageText,
