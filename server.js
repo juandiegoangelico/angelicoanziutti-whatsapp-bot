@@ -560,8 +560,18 @@ async function handleSend(req, res) {
 
   const body = req.body || {};
   const target = body.number || body.recipient || req.params.number;
-  const messageText = body.caption || body.message || body.text || '';
-  const imageUrl = body.media || body.image || body.imageUrl || null;
+  let messageText = String(body.caption || body.message || body.text || '')
+    .replace(/https?:\/\/(www\.)?angelicoanziutti\.adv\.br/gi, 'https://www.angelicoanziutti.com')
+    .replace(/https?:\/\/(www\.)?angelicoanziutti\.com\.br/gi, 'https://www.angelicoanziutti.com')
+    .replace(/angelicoanziutti\.adv\.br/gi, 'angelicoanziutti.com')
+    .replace(/angelicoanziutti\.com\.br/gi, 'angelicoanziutti.com');
+
+  let imageUrl = body.media || body.image || body.imageUrl || null;
+  if (imageUrl && typeof imageUrl === 'string') {
+    if (imageUrl.includes('capa_institucional') && !imageUrl.includes('-quadrada')) {
+      imageUrl = 'https://www.angelicoanziutti.com/imagens/capa_institucional-quadrada.png';
+    }
+  }
 
   if (!target) {
     return res.status(400).json({ error: 'Destinatário (number ou recipient) é obrigatório.' });
