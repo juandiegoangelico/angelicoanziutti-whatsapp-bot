@@ -589,10 +589,23 @@ async function handleSend(req, res) {
           caption: messageText,
         });
       } catch (imgErr) {
-        console.warn(`⚠️ [WhatsApp Advocacia] Falha ao baixar imagem (${imgErr.message}). Enviando apenas texto para não perder a publicação.`);
-        result = await sock.sendMessage(formattedJid, {
-          text: messageText,
-        });
+        console.warn(`⚠️ [WhatsApp Advocacia] Falha ao baixar imagem (${imgErr.message}). Tentando capa institucional quadrada de segurança...`);
+        try {
+          const fallbackRes = await axios.get('https://www.angelicoanziutti.com/imagens/capa_institucional-quadrada.png', {
+            responseType: 'arraybuffer',
+            timeout: 15000,
+          });
+          result = await sock.sendMessage(formattedJid, {
+            image: Buffer.from(fallbackRes.data),
+            caption: messageText,
+          });
+          console.log(`✅ [WhatsApp Advocacia] Imagem institucional de contingência enviada com sucesso.`);
+        } catch (fallbackErr) {
+          console.warn(`⚠️ [WhatsApp Advocacia] Falha também no fallback institucional (${fallbackErr.message}). Enviando apenas texto.`);
+          result = await sock.sendMessage(formattedJid, {
+            text: messageText,
+          });
+        }
       }
     } else {
       result = await sock.sendMessage(formattedJid, {
