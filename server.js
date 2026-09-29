@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import axios from 'axios';
+import sharp from 'sharp';
 import qrcode from 'qrcode';
 import pino from 'pino';
 import fs from 'node:fs';
@@ -549,6 +550,140 @@ app.get('/channel-status', async (req, res) => {
       error: 'Não foi possível verificar status do canal. Certifique-se de que o número do escritório é administrador ou seguidor.', 
       details: err.message 
     });
+  }
+});
+
+// ==========================================
+// 🎨 GERADOR DINÂMICO DE CAPAS PERSONALIZADAS (ON-DEMAND)
+// ==========================================
+function wrapText(text, maxChars) {
+  const words = String(text || '').trim().split(/\s+/);
+  const lines = [];
+  let current = '';
+  for (const w of words) {
+    if (!current) {
+      current = w;
+    } else if ((current + ' ' + w).length <= maxChars) {
+      current = current + ' ' + w;
+    } else {
+      lines.push(current);
+      current = w;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+function escapeXml(unsafe) {
+  return String(unsafe || '').replace(/[<>&'"]/g, c => {
+    switch (c) {
+      case '<': return '&lt;';
+      case '>': return '&gt;';
+      case '&': return '&amp;';
+      case '\'': return '&apos;';
+      case '"': return '&quot;';
+      default: return c;
+    }
+  });
+}
+
+let LOGO_BASE64_CACHE = '';
+function obterLogoBase64() {
+  if (LOGO_BASE64_CACHE) return LOGO_BASE64_CACHE;
+  try {
+    const logoFile = path.resolve('logo.png');
+    if (fs.existsSync(logoFile)) {
+      LOGO_BASE64_CACHE = fs.readFileSync(logoFile).toString('base64');
+    }
+  } catch (e) {
+    console.warn('Aviso ao carregar logo.png para capa:', e.message);
+  }
+  return LOGO_BASE64_CACHE;
+}
+
+function gerarSvgCapa(titulo, subtitulo, categoria, formato) {
+  const isStories = formato === 'stories';
+  const width = 1080;
+  const height = isStories ? 1920 : 1080;
+  const catText = (categoria || 'ANÁLISE JURÍDICA').toUpperCase();
+
+  const titleLines = wrapText(titulo, isStories ? 22 : 28).slice(0, 4);
+  const subLines = subtitulo ? wrapText(subtitulo, isStories ? 32 : 44).slice(0, 3) : [];
+
+  const startY = isStories ? 560 : 320;
+  const titleLineHeight = isStories ? 76 : 72;
+  const subLineHeight = 40;
+
+  let titleSvg = '';
+  titleLines.forEach((line, idx) => {
+    const y = startY + (idx * titleLineHeight);
+    titleSvg += `<text x="80" y="${y}" font-family="Georgia, serif" font-size="${isStories ? 56 : 52}" font-weight="bold" fill="#ffffff">${escapeXml(line)}</text>\n`;
+  });
+
+  const subStartY = startY + (titleLines.length * titleLineHeight) + 35;
+  let subSvg = '';
+  subLines.forEach((line, idx) => {
+    const y = subStartY + (idx * subLineHeight);
+    subSvg += `<text x="80" y="${y}" font-family="Helvetica, Arial, sans-serif" font-size="28" fill="#94a3b8">${escapeXml(line)}</text>\n`;
+  });
+
+  const footerY = height - 80;
+  const logoBase64 = obterLogoBase64();
+  const logoSvg = logoBase64 
+    ? `<image x="${width - 80 - 130}" y="${isStories ? 120 : 65}" width="130" height="130" href="data:image/png;base64,${logoBase64}" />`
+    : '';
+
+  return `
+  <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
+    <!-- Fundo Azul Marinho Nobre -->
+    <rect width="${width}" height="${height}" fill="#051124"/>
+    
+    <!-- Moldura Dourada e Borda de Acabamento -->
+    <rect x="32" y="32" width="${width - 64}" height="${height - 64}" fill="none" stroke="#d4af37" stroke-width="3"/>
+    <rect x="44" y="44" width="${width - 88}" height="${height - 88}" fill="none" stroke="#1e3250" stroke-width="1"/>
+
+    <!-- Header: Logo e Categoria -->
+    ${logoSvg}
+    <text x="80" y="${isStories ? 430 : 125}" font-family="Helvetica, Arial, sans-serif" font-size="24" font-weight="bold" fill="#d4af37" letter-spacing="2">
+      ${escapeXml(catText)} • ANÁLISE JURÍDICA
+    </text>
+    <line x1="80" y1="${isStories ? 465 : 160}" x2="${width - 80 - (logoBase64 && !isStories ? 150 : 0)}" y2="${isStories ? 465 : 160}" stroke="#1e3250" stroke-width="1"/>
+
+    <!-- Conteúdo: Título e Subtítulo -->
+    ${titleSvg}
+    ${subSvg}
+
+    <!-- Rodapé Institucional -->
+    <line x1="80" y1="${footerY - 40}" x2="${width - 80}" y2="${footerY - 40}" stroke="#1e3250" stroke-width="1"/>
+    <text x="80" y="${footerY}" font-family="Georgia, serif" font-size="24" font-weight="bold" fill="#d4af37" letter-spacing="1">
+      ANGÉLICO &amp; ANZIUTTI ADVOGADOS
+    </text>
+    <text x="${width - 80}" y="${footerY}" font-family="Helvetica, Arial, sans-serif" font-size="22" fill="#94a3b8" text-anchor="end">
+      www.angelicoanziutti.com
+    </text>
+  </svg>`;
+}
+
+// Rota Pública: Gerador Dinâmico de Capas Personalizadas (Feed 1:1, Stories 9:16 ou Horizontal)
+app.get('/capa', async (req, res) => {
+  try {
+    const titulo = req.query.titulo || req.query.title || 'Angélico & Anziutti Advogados Associados';
+    const subtitulo = req.query.subtitulo || req.query.subtitle || req.query.lead || '';
+    const categoria = req.query.categoria || req.query.category || 'DIREITO';
+    const formato = (req.query.formato || req.query.format || 'quadrada').toLowerCase();
+
+    const svg = gerarSvgCapa(titulo, subtitulo, categoria, formato);
+    const pngBuffer = await sharp(Buffer.from(svg)).png({ compressionLevel: 8 }).toBuffer();
+
+    res.set({
+      'Content-Type': 'image/png',
+      'Content-Length': pngBuffer.length,
+      'Cache-Control': 'public, max-age=604800, immutable',
+    });
+    return res.send(pngBuffer);
+  } catch (err) {
+    console.error('❌ Erro ao gerar capa dinâmica:', err.message);
+    return res.status(500).json({ error: 'Erro ao gerar capa.', details: err.message });
   }
 });
 
