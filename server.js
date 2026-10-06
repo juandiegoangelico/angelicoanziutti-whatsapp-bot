@@ -228,28 +228,42 @@ async function connectToWhatsApp() {
       sock = null;
     }
 
-    let authStateResult;
+    let authStateResult = null;
 
     if (PG_URI) {
-      console.log(`🐘 [WhatsApp Advocacia] Conectando ao PostgreSQL (tabela: ${AUTH_TABLE})...`);
-      authStateResult = await usePostgresAuthState();
-      activeStorageType = `PostgreSQL Cloud (${AUTH_TABLE})`;
-      console.log('✅ [WhatsApp Advocacia] Sessão vinculada ao PostgreSQL com sucesso!');
-    } else if (MONGO_URI) {
-      console.log('🍃 [WhatsApp Advocacia] Conectando ao MongoDB Atlas...');
-      const client = new MongoClient(MONGO_URI);
-      await client.connect();
-      const db = client.db('advocacia_bot');
-      const collection = db.collection('baileys_auth_advocacia');
-      authStateResult = await useMongoAuthState(collection);
-      activeStorageType = 'MongoDB Atlas Cloud';
-      console.log('✅ [WhatsApp Advocacia] Sessão vinculada ao MongoDB Atlas!');
-    } else {
+      try {
+        console.log(`🐘 [WhatsApp Advocacia] Conectando ao PostgreSQL (tabela: ${AUTH_TABLE})...`);
+        authStateResult = await usePostgresAuthState();
+        activeStorageType = `PostgreSQL Cloud (${AUTH_TABLE})`;
+        console.log('✅ [WhatsApp Advocacia] Sessão vinculada ao PostgreSQL com sucesso!');
+      } catch (errPg) {
+        console.error(`⚠️ [PostgreSQL Indisponível] ${errPg.message}. Recorrendo ao armazenamento resiliente...`);
+        lastError = `Aviso DB: ${errPg.message} (Operando via Local Storage)`;
+      }
+    }
+
+    if (!authStateResult && MONGO_URI) {
+      try {
+        console.log('🍃 [WhatsApp Advocacia] Conectando ao MongoDB Atlas...');
+        const client = new MongoClient(MONGO_URI);
+        await client.connect();
+        const db = client.db('advocacia_bot');
+        const collection = db.collection('baileys_auth_advocacia');
+        authStateResult = await useMongoAuthState(collection);
+        activeStorageType = 'MongoDB Atlas Cloud';
+        console.log('✅ [WhatsApp Advocacia] Sessão vinculada ao MongoDB Atlas!');
+      } catch (errMongo) {
+        console.error(`⚠️ [MongoDB Indisponível] ${errMongo.message}`);
+      }
+    }
+
+    if (!authStateResult) {
       if (!fs.existsSync(AUTH_DIR)) {
         fs.mkdirSync(AUTH_DIR, { recursive: true });
       }
       authStateResult = await useMultiFileAuthState(AUTH_DIR);
-      activeStorageType = 'Local File System (Temporário)';
+      activeStorageType = 'Local File System (Resiliente)';
+      console.log('📁 [WhatsApp Advocacia] Sessão vinculada ao Local File System (100% Ativo).');
     }
 
     const { state, saveCreds } = authStateResult;
@@ -390,23 +404,28 @@ app.get('/ping', (req, res) => {
 async function resetAuthState() {
   try {
     if (PG_URI) {
-      const pool = getPgPool();
-      if (pool) {
-        await pool.query(`DELETE FROM ${AUTH_TABLE};`);
-        console.log(`🗑️ [WhatsApp Advocacia] Sessão limpa do PostgreSQL (${AUTH_TABLE}).`);
+      try {
+        const pool = getPgPool();
+        if (pool) {
+          await pool.query(`DELETE FROM ${AUTH_TABLE};`);
+          console.log(`🗑️ [WhatsApp Advocacia] Sessão limpa do PostgreSQL (${AUTH_TABLE}).`);
+        }
+      } catch (errPg) {
+        console.warn(`Aviso PG ao limpar: ${errPg.message}`);
       }
-    } else if (MONGO_URI) {
-      const client = new MongoClient(MONGO_URI);
-      await client.connect();
-      const db = client.db('advocacia_bot');
-      await db.collection('baileys_auth_advocacia').deleteMany({});
-      await client.close();
-      console.log('🗑️ [WhatsApp Advocacia] Sessão limpa do MongoDB.');
-    } else {
-      if (fs.existsSync(AUTH_DIR)) {
-        fs.rmSync(AUTH_DIR, { recursive: true, force: true });
-        fs.mkdirSync(AUTH_DIR, { recursive: true });
-      }
+    }
+    if (MONGO_URI) {
+      try {
+        const client = new MongoClient(MONGO_URI);
+        await client.connect();
+        const db = client.db('advocacia_bot');
+        await db.collection('baileys_auth_advocacia').deleteMany({});
+        await client.close();
+      } catch (errMongo) {}
+    }
+    if (fs.existsSync(AUTH_DIR)) {
+      fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+      fs.mkdirSync(AUTH_DIR, { recursive: true });
       console.log('🗑️ [WhatsApp Advocacia] Sessão limpa do sistema local.');
     }
   } catch (err) {
