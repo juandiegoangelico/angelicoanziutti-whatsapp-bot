@@ -16,6 +16,7 @@ import makeWASocket, {
   proto,
   initAuthCreds,
   BufferJSON,
+  Browsers,
 } from '@whiskeysockets/baileys';
 
 dotenv.config();
@@ -50,13 +51,27 @@ let isConnected = false;
 let userPhone = null;
 let activeStorageType = 'Local File System (Temporário)';
 
+// Singleton Pool para PostgreSQL para evitar estouro de conexões no Render
+let pgPool = null;
+function getPgPool() {
+  if (!pgPool && PG_URI) {
+    const isInternalRender = PG_URI.includes('.render.com') || PG_URI.includes('dpg-');
+    pgPool = new Pool({
+      connectionString: PG_URI,
+      ssl: isInternalRender ? { rejectUnauthorized: false } : false,
+      max: 5,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 10000,
+    });
+    pgPool.on('error', (err) => console.error('⚠️ [PostgreSQL Pool Error]:', err.message));
+  }
+  return pgPool;
+}
+
 // 1. Auth State Provider para PostgreSQL Cloud (com isolamento de tabela por escritório)
-async function usePostgresAuthState(connectionString) {
-  const isInternalRender = connectionString.includes('.render.com') || connectionString.includes('dpg-');
-  const pool = new Pool({
-    connectionString,
-    ssl: isInternalRender ? { rejectUnauthorized: false } : false,
-  });
+async function usePostgresAuthState() {
+  const pool = getPgPool();
+  if (!pool) throw new Error('DATABASE_URL do PostgreSQL não configurada.');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ${AUTH_TABLE} (
@@ -192,13 +207,30 @@ async function useMongoAuthState(collection) {
 }
 
 // Inicializa o cliente WhatsApp (Baileys)
+let isConnecting = false;
+
 async function connectToWhatsApp() {
+  if (isConnecting) {
+    console.log('⏳ [WhatsApp Advocacia] Tentativa de conexão já em andamento...');
+    return;
+  }
+  isConnecting = true;
+
   try {
+    // Limpa socket e ouvintes anteriores se existirem
+    if (sock) {
+      try {
+        sock.ev.removeAllListeners();
+        sock.end(undefined);
+      } catch (e) {}
+      sock = null;
+    }
+
     let authStateResult;
 
     if (PG_URI) {
       console.log(`🐘 [WhatsApp Advocacia] Conectando ao PostgreSQL (tabela: ${AUTH_TABLE})...`);
-      authStateResult = await usePostgresAuthState(PG_URI);
+      authStateResult = await usePostgresAuthState();
       activeStorageType = `PostgreSQL Cloud (${AUTH_TABLE})`;
       console.log('✅ [WhatsApp Advocacia] Sessão vinculada ao PostgreSQL com sucesso!');
     } else if (MONGO_URI) {
@@ -219,14 +251,24 @@ async function connectToWhatsApp() {
     }
 
     const { state, saveCreds } = authStateResult;
-    const { version } = await fetchLatestBaileysVersion();
+
+    let version = [2, 3000, 1043857760];
+    try {
+      const v = await fetchLatestBaileysVersion();
+      if (v?.version) version = v.version;
+    } catch (e) {
+      console.warn('ℹ️ [WhatsApp Advocacia] Usando versão padrão Baileys:', version);
+    }
 
     sock = makeWASocket({
       version,
-      logger: pino({ level: 'silent' }),
+      logger: pino({ level: 'warn' }),
       auth: state,
-      browser: ['Angélico & Anziutti Advocacia', 'Chrome', '1.0.0'],
+      browser: Browsers.macOS('Desktop'),
       generateHighQualityLinkPreview: true,
+      defaultQueryTimeoutMs: undefined,
+      connectTimeoutMs: 60000,
+      keepAliveIntervalMs: 25000,
     });
 
     sock.ev.on('creds.update', saveCreds);
@@ -235,9 +277,13 @@ async function connectToWhatsApp() {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
-        currentQrCode = await qrcode.toDataURL(qr, { scale: 8 });
-        isConnected = false;
-        console.log('📱 [WhatsApp Advocacia] Novo QR Code gerado! Acesse a rota /qr para escanear com o celular do escritório.');
+        try {
+          currentQrCode = await qrcode.toDataURL(qr, { scale: 8 });
+          isConnected = false;
+          console.log('📱 [WhatsApp Advocacia] Novo QR Code gerado! Pronto para leitura.');
+        } catch (eQr) {
+          console.error('Erro ao converter QR Code:', eQr.message);
+        }
       }
 
       if (connection === 'close') {
@@ -246,16 +292,19 @@ async function connectToWhatsApp() {
         const shouldReconnect = !isLoggedOut;
 
         isConnected = false;
-        currentQrCode = null;
         console.log(`⚠️ [WhatsApp Advocacia] Conexão fechada (Código: ${statusCode}). Reconectando: ${shouldReconnect}`);
-        if (shouldReconnect) {
-          setTimeout(connectToWhatsApp, 4000);
-        } else {
-          console.log('🗑️ [WhatsApp Advocacia] Sessão desconectada. Limpando credenciais...');
+
+        if (isLoggedOut) {
+          console.log('🗑️ [WhatsApp Advocacia] Sessão deslogada pelo WhatsApp. Resetando credenciais...');
+          currentQrCode = null;
+          userPhone = null;
           try {
             await resetAuthState();
           } catch (e) {}
           setTimeout(connectToWhatsApp, 2000);
+        } else {
+          // Mantém currentQrCode disponível na tela para o usuário escanear
+          setTimeout(connectToWhatsApp, 5000);
         }
       } else if (connection === 'open') {
         isConnected = true;
@@ -267,17 +316,19 @@ async function connectToWhatsApp() {
   } catch (err) {
     console.error('💥 [WhatsApp Advocacia] Falha ao iniciar Baileys:', err.message);
     setTimeout(connectToWhatsApp, 5000);
+  } finally {
+    isConnecting = false;
   }
 }
 
-// Keep-alive automático para evitar que o Render hiberne
+// Keep-alive automático para evitar hibernação no Render (a cada 4 minutos)
 if (SELF_URL) {
   setInterval(async () => {
     try {
       await axios.get(`${SELF_URL}/ping`, { timeout: 10000 });
-      console.log('💓 [Keep-Alive] Ping interno executado 24/7.');
+      console.log('💓 [Keep-Alive] Ping interno executado com sucesso.');
     } catch (err) {}
-  }, 10 * 60 * 1000);
+  }, 4 * 60 * 1000);
 }
 
 // Middleware de Autenticação
@@ -302,6 +353,7 @@ app.get('/', (req, res) => {
       service: 'angelicoanziutti-whatsapp-bot',
       office: 'Angélico & Anziutti Advogados Associados',
       connected: isConnected,
+      hasQr: !!currentQrCode,
       user: userPhone,
       storage: activeStorageType,
       serverTime: new Date().toISOString(),
@@ -310,22 +362,32 @@ app.get('/', (req, res) => {
   return res.redirect('/qr');
 });
 
+app.get('/status', (req, res) => {
+  return res.json({
+    status: 'online',
+    service: 'angelicoanziutti-whatsapp-bot',
+    office: 'Angélico & Anziutti Advogados Associados',
+    connected: isConnected,
+    hasQr: !!currentQrCode,
+    user: userPhone,
+    storage: activeStorageType,
+    serverTime: new Date().toISOString(),
+  });
+});
+
 app.get('/ping', (req, res) => {
   res.send('pong');
 });
 
-// Rota 2: Limpar sessão para trocar de número
+// Rota 2: Limpar sessão para trocar de número / forçar novo QR Code
 async function resetAuthState() {
   try {
     if (PG_URI) {
-      const isInternalRender = PG_URI.includes('.render.com') || PG_URI.includes('dpg-');
-      const pool = new Pool({
-        connectionString: PG_URI,
-        ssl: isInternalRender ? { rejectUnauthorized: false } : false,
-      });
-      await pool.query(`DELETE FROM ${AUTH_TABLE};`);
-      await pool.end();
-      console.log(`🗑️ [WhatsApp Advocacia] Sessão limpa do PostgreSQL (${AUTH_TABLE}).`);
+      const pool = getPgPool();
+      if (pool) {
+        await pool.query(`DELETE FROM ${AUTH_TABLE};`);
+        console.log(`🗑️ [WhatsApp Advocacia] Sessão limpa do PostgreSQL (${AUTH_TABLE}).`);
+      }
     } else if (MONGO_URI) {
       const client = new MongoClient(MONGO_URI);
       await client.connect();
@@ -347,14 +409,23 @@ async function resetAuthState() {
 
 app.get('/logout', async (req, res) => {
   try {
-    console.log('🔄 [WhatsApp Advocacia] Desconectando sessão atual para troca de número...');
+    console.log('🔄 [WhatsApp Advocacia] Desconectando sessão atual de forma não-bloqueante...');
     if (sock) {
       try {
-        await sock.logout();
+        if (isConnected && sock.ws?.readyState === 1) {
+          await Promise.race([
+            sock.logout(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+          ]);
+        } else {
+          sock.end(undefined);
+        }
       } catch (e) {
-        sock.end(undefined);
+        try { sock.end(undefined); } catch (e2) {}
       }
+      sock = null;
     }
+
     await resetAuthState();
     isConnected = false;
     userPhone = null;
@@ -362,7 +433,7 @@ app.get('/logout', async (req, res) => {
 
     setTimeout(() => {
       connectToWhatsApp().catch(() => {});
-    }, 1500);
+    }, 1000);
 
     return res.send(`
       <!DOCTYPE html>
