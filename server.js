@@ -50,6 +50,7 @@ let currentQrCode = null;
 let isConnected = false;
 let userPhone = null;
 let activeStorageType = 'Local File System (Temporário)';
+let lastError = null;
 
 // Singleton Pool para PostgreSQL para evitar estouro de conexões no Render
 let pgPool = null;
@@ -59,11 +60,12 @@ function getPgPool() {
     pgPool = new Pool({
       connectionString: PG_URI,
       ssl: isInternalRender ? { rejectUnauthorized: false } : false,
-      max: 5,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000,
+      max: 10,
     });
-    pgPool.on('error', (err) => console.error('⚠️ [PostgreSQL Pool Error]:', err.message));
+    pgPool.on('error', (err) => {
+      lastError = `PG Pool: ${err.message}`;
+      console.error('⚠️ [PostgreSQL Pool Error]:', err.message);
+    });
   }
   return pgPool;
 }
@@ -314,6 +316,7 @@ async function connectToWhatsApp() {
       }
     });
   } catch (err) {
+    lastError = `Baileys Init: ${err.message}`;
     console.error('💥 [WhatsApp Advocacia] Falha ao iniciar Baileys:', err.message);
     setTimeout(connectToWhatsApp, 5000);
   } finally {
@@ -356,6 +359,8 @@ app.get('/', (req, res) => {
       hasQr: !!currentQrCode,
       user: userPhone,
       storage: activeStorageType,
+      hasPgUri: !!PG_URI,
+      lastError,
       serverTime: new Date().toISOString(),
     });
   }
@@ -371,6 +376,8 @@ app.get('/status', (req, res) => {
     hasQr: !!currentQrCode,
     user: userPhone,
     storage: activeStorageType,
+    hasPgUri: !!PG_URI,
+    lastError,
     serverTime: new Date().toISOString(),
   });
 });
