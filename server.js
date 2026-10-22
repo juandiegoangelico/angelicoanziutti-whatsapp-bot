@@ -768,8 +768,20 @@ app.get('/capa', async (req, res) => {
     const subtitulo = req.query.subtitulo || req.query.subtitle || req.query.lead || '';
     const categoria = req.query.categoria || req.query.category || 'DIREITO';
     const formato = (req.query.formato || req.query.format || 'quadrada').toLowerCase();
+    const ext = (req.query.ext || req.query.tipo || (formato === 'stories' ? 'jpg' : 'png')).toLowerCase();
 
     const svg = gerarSvgCapa(titulo, subtitulo, categoria, formato);
+
+    if (ext === 'jpg' || ext === 'jpeg') {
+      const jpgBuffer = await sharp(Buffer.from(svg)).jpeg({ quality: 95 }).toBuffer();
+      res.set({
+        'Content-Type': 'image/jpeg',
+        'Content-Length': jpgBuffer.length,
+        'Cache-Control': 'public, max-age=604800, immutable',
+      });
+      return res.send(jpgBuffer);
+    }
+
     const pngBuffer = await sharp(Buffer.from(svg)).png({ compressionLevel: 8 }).toBuffer();
 
     res.set({
