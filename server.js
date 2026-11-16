@@ -704,58 +704,70 @@ function gerarSvgCapa(titulo, subtitulo, categoria, formato) {
   const height = isStories ? 1920 : 1080;
   const catText = (categoria || 'ANÁLISE JURÍDICA').toUpperCase();
 
-  const titleLines = wrapText(titulo, isStories ? 22 : 28).slice(0, 4);
-  const subLines = subtitulo ? wrapText(subtitulo, isStories ? 32 : 44).slice(0, 3) : [];
+  // No Stories, margem lateral segura de 125px de cada lado (largura útil 830px)
+  const marginX = isStories ? 125 : 80;
+  const contentWidth = width - (marginX * 2);
+
+  const titleLines = wrapText(titulo, isStories ? 20 : 28).slice(0, isStories ? 5 : 4);
+  const subLines = subtitulo ? wrapText(subtitulo, isStories ? 28 : 44).slice(0, 3) : [];
 
   const startY = isStories ? 560 : 320;
-  const titleLineHeight = isStories ? 76 : 72;
-  const subLineHeight = 40;
+  const titleLineHeight = isStories ? 68 : 72;
+  const subLineHeight = isStories ? 38 : 40;
 
   let titleSvg = '';
   titleLines.forEach((line, idx) => {
     const y = startY + (idx * titleLineHeight);
-    titleSvg += `<text x="80" y="${y}" font-family="Georgia, serif" font-size="${isStories ? 56 : 52}" font-weight="bold" fill="#ffffff">${escapeXml(line)}</text>\n`;
+    titleSvg += `<text x="${marginX}" y="${y}" font-family="Georgia, serif" font-size="${isStories ? 48 : 52}" font-weight="bold" fill="#ffffff">${escapeXml(line)}</text>\n`;
   });
 
-  const subStartY = startY + (titleLines.length * titleLineHeight) + 35;
+  const subStartY = startY + (titleLines.length * titleLineHeight) + 30;
   let subSvg = '';
   subLines.forEach((line, idx) => {
     const y = subStartY + (idx * subLineHeight);
-    subSvg += `<text x="80" y="${y}" font-family="Helvetica, Arial, sans-serif" font-size="28" fill="#94a3b8">${escapeXml(line)}</text>\n`;
+    subSvg += `<text x="${marginX}" y="${y}" font-family="Helvetica, Arial, sans-serif" font-size="${isStories ? 26 : 28}" fill="#94a3b8">${escapeXml(line)}</text>\n`;
   });
 
-  const footerY = height - 80;
+  // Stories: Rodapé em y=1520 (abaixo de 1600 começa a barra de resposta/ações do Instagram)
+  const footerY = isStories ? 1520 : (height - 80);
   const logoBase64 = obterLogoBase64();
+  
+  // No Stories o logo fica centralizado a partir de y=290 (abaixo da barra superior do Instagram de 250px)
   const logoSvg = logoBase64 
-    ? `<image x="${width - 80 - 130}" y="${isStories ? 120 : 65}" width="130" height="130" href="data:image/png;base64,${logoBase64}" />`
+    ? (isStories 
+        ? `<image x="${(width - 130) / 2}" y="290" width="130" height="130" href="data:image/png;base64,${logoBase64}" />`
+        : `<image x="${width - 80 - 130}" y="65" width="130" height="130" href="data:image/png;base64,${logoBase64}" />`)
     : '';
+
+  const headerTextY = isStories ? 465 : 125;
+  const headerLineY = isStories ? 500 : 160;
 
   return `
   <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">
     <!-- Fundo Azul Marinho Nobre -->
     <rect width="${width}" height="${height}" fill="#051124"/>
     
-    <!-- Moldura Dourada e Borda de Acabamento -->
-    <rect x="32" y="32" width="${width - 64}" height="${height - 64}" fill="none" stroke="#d4af37" stroke-width="3"/>
-    <rect x="44" y="44" width="${width - 88}" height="${height - 88}" fill="none" stroke="#1e3250" stroke-width="1"/>
+    <!-- Moldura Dourada e Borda de Acabamento Respeitando Margens Seguras -->
+    <rect x="${isStories ? 40 : 32}" y="${isStories ? 40 : 32}" width="${width - (isStories ? 80 : 64)}" height="${height - (isStories ? 80 : 64)}" fill="none" stroke="#d4af37" stroke-width="3"/>
+    <rect x="${isStories ? 52 : 44}" y="${isStories ? 52 : 44}" width="${width - (isStories ? 104 : 88)}" height="${height - (isStories ? 104 : 88)}" fill="none" stroke="#1e3250" stroke-width="1"/>
 
     <!-- Header: Logo e Categoria -->
     ${logoSvg}
-    <text x="80" y="${isStories ? 430 : 125}" font-family="Helvetica, Arial, sans-serif" font-size="24" font-weight="bold" fill="#d4af37" letter-spacing="2">
+    <text x="${marginX}" y="${headerTextY}" font-family="Helvetica, Arial, sans-serif" font-size="24" font-weight="bold" fill="#d4af37" letter-spacing="2">
       ${escapeXml(catText)} • ANÁLISE JURÍDICA
     </text>
-    <line x1="80" y1="${isStories ? 465 : 160}" x2="${width - 80 - (logoBase64 && !isStories ? 150 : 0)}" y2="${isStories ? 465 : 160}" stroke="#1e3250" stroke-width="1"/>
+    <line x1="${marginX}" y1="${headerLineY}" x2="${width - marginX - (logoBase64 && !isStories ? 150 : 0)}" y2="${headerLineY}" stroke="#1e3250" stroke-width="1"/>
 
     <!-- Conteúdo: Título e Subtítulo -->
     ${titleSvg}
     ${subSvg}
 
-    <!-- Rodapé Institucional -->
-    <line x1="80" y1="${footerY - 40}" x2="${width - 80}" y2="${footerY - 40}" stroke="#1e3250" stroke-width="1"/>
-    <text x="80" y="${footerY}" font-family="Georgia, serif" font-size="24" font-weight="bold" fill="#d4af37" letter-spacing="1">
+    <!-- Rodapé Institucional Seguro -->
+    <line x1="${marginX}" y1="${footerY - 40}" x2="${width - marginX}" y2="${footerY - 40}" stroke="#1e3250" stroke-width="1"/>
+    <text x="${marginX}" y="${footerY}" font-family="Georgia, serif" font-size="24" font-weight="bold" fill="#d4af37" letter-spacing="1">
       ANGÉLICO &amp; ANZIUTTI ADVOGADOS
     </text>
-    <text x="${width - 80}" y="${footerY}" font-family="Helvetica, Arial, sans-serif" font-size="22" fill="#94a3b8" text-anchor="end">
+    <text x="${width - marginX}" y="${footerY}" font-family="Helvetica, Arial, sans-serif" font-size="22" fill="#94a3b8" text-anchor="end">
       www.angelicoanziutti.com
     </text>
   </svg>`;
